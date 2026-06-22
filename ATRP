@@ -1,0 +1,163 @@
+//+------------------------------------------------------------------+
+//|                                               SimpleATRP.mq4     |
+//|         Simplified ATR Percentage using built-in iATR
+//|           对周期3和10的atr
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2023"
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+#property strict
+
+#property indicator_separate_window
+#property indicator_buffers 2
+#property indicator_color1 clrBlue
+#property indicator_color2 clrRed
+#property indicator_width1 2
+#property indicator_width2 1
+#property indicator_style2 STYLE_DASH
+#property indicator_label1 "ATRP%"
+#property indicator_label2 "MA(20)x1.4"
+
+input int Period1 = 3;
+input int Period2 = 10;
+input double Weight1 = 50;
+input double Weight2 = 50;
+input int MAPeriod = 20;           // 移动平均周期20
+input double MAFactor = 1.4;       // 移动平均乘数因子
+
+double atrpBuffer[];
+double maBuffer[];
+
+//+------------------------------------------------------------------+
+//| Custom indicator initialization function                         |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   SetIndexBuffer(0, atrpBuffer);
+   SetIndexBuffer(1, maBuffer);
+   
+   SetIndexStyle(0, DRAW_LINE);
+   SetIndexStyle(1, DRAW_LINE);
+   
+   IndicatorShortName("ATRP(" + IntegerToString(Period1) + "," + IntegerToString(Period2) + ") MA" + 
+                      IntegerToString(MAPeriod) + "x" + DoubleToString(MAFactor, 1));
+   IndicatorDigits(2);
+   
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Custom indicator iteration function                              |
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double &open[],
+                const double &high[],
+                const double &low[],
+                const double &close[],
+                const long &tick_volume[],
+                const long &volume[],
+                const int &spread[])
+{
+   // 检查是否有足够的数据
+   int min_bars = MathMax(MathMax(Period1, Period2), MAPeriod);
+   if(rates_total < min_bars)
+      return(0);
+   
+   // 设置数组为时间序列
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(atrpBuffer, true);
+   ArraySetAsSeries(maBuffer, true);
+   
+   // 设置起始位置
+   int start;
+   if(prev_calculated == 0)
+   {
+      start = min_bars - 1;
+   }
+   else
+   {
+      start = prev_calculated - 1;
+   }
+   
+   // 计算ATRP值
+   for(int i = start; i >= 0; i--)
+   {
+      // 获取ATR值（使用时间序列索引）
+      double atr1 = iATR(_Symbol, _Period, Period1, i);
+      double atr2 = iATR(_Symbol, _Period, Period2, i);
+      
+      // 计算加权ATR
+      double total_weight = Weight1 + Weight2;
+      double atrpValue = 0;
+      
+      if(total_weight > 0)
+      {
+         double w1 = Weight1 / total_weight;
+         double w2 = Weight2 / total_weight;
+         double weighted_atr = (atr1 * w1) + (atr2 * w2);
+         
+         // 计算ATRP百分比
+         if(close[i] != 0)
+         {
+            atrpValue = (weighted_atr / close[i]) * 100.0;
+         }
+         else if(i < rates_total - 1)  // 有下一个（更旧）的数据
+         {
+            atrpValue = atrpBuffer[i+1];
+         }
+      }
+      
+      // 存储ATRP值
+      atrpBuffer[i] = atrpValue;
+   }
+   
+   // 计算移动平均线
+   for(int i = start; i >= 0; i--)
+   {
+      // 检查是否有足够的数据计算MA
+      if(i + MAPeriod - 1 < rates_total)  // 确保有足够的后续数据
+      {
+         double sum = 0;
+         int count = 0;
+         
+         // 累加后续的MAPeriod个值（更旧的数据）
+         for(int j = 0; j < MAPeriod; j++)
+         {
+            int idx = i + j;  // 注意：时间序列中，更大的索引是更旧的数据
+            if(idx < rates_total)
+            {
+               sum += atrpBuffer[idx];
+               count++;
+            }
+         }
+         
+         if(count == MAPeriod)
+         {
+            double maValue = sum / MAPeriod;
+            maBuffer[i] = maValue * MAFactor;
+            
+            // 输出调试信息
+            if(i == 0)  // 最新K线
+            {
+               Print("最新K线 - ATRP: ", atrpBuffer[i], 
+                     ", MA原始值: ", maValue, 
+                     ", MAx1.4: ", maBuffer[i]);
+            }
+         }
+         else
+         {
+            maBuffer[i] = 0;
+         }
+      }
+      else
+      {
+         maBuffer[i] = 0;
+      }
+   }
+   
+   return(rates_total);
+}
